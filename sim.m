@@ -3,6 +3,9 @@
 %For example, there are seperate creation/annihilation operators for QBs and resonators.
 %Later, these get combined with the Kronecker tensor product to form operators for the whole system.
 
+%NOTES:
+%-states are column vectors
+%-densities/populations/whatever-you-want-to-call-them and straight up fock states are row vectors
 
 %constants
 global N_ph = 2; %consider up to this many photons
@@ -16,6 +19,10 @@ global Wcoup = 1;%2*pi*250e6; %coupling between resonators
 global N_resonator_states; %run generate_resonator_states to populate
 global resonator_states; %run generate_resonator_states to populate
 
+
+function ev = expectation_value(state, operator)
+  ev = real(state'*(operator*state)); %use 'real' because small small imag part remains
+end
 
 
 %generates a matrix that contains the possible Fock states in rows; the number in row n is the number of photons in resonator n
@@ -69,49 +76,46 @@ function generate_resonator_states
   end
 end
 
-% takes a population like [1,0,0,1] (one photon in first and last resonators) and returns the equivilent state: [0;0;0;0;0;0;0;0;1;0;0;0;0;0;0]
+% takes a fock state like [1,0,0,1] (one photon in first and last resonators) and returns the equivilent state: [0;0;0;0;0;0;0;0;1;0;0;0;0;0;0]
 % only works for the values in the array of states, not superpositions of them
-function s = density_to_resonator_state(density)
+function s = fock_state_to_resonator_state(fock_state)
   global N_resonator_states;
   global resonator_states;
   s = zeros(N_resonator_states, 1);
-  s(resonator_state_index(density)) += 1;
+  s(resonator_state_index(fock_state)) += 1;
 end
 
-%reverse of previous function; will work on fractional states
-function s = resonator_state_to_density(state)
-  global N_resonator_states;
+%reverse of previous function; will work on superpositions of states
+function density = resonator_state_to_density(state)
   global N_res;
-  global resonator_states;
-  s = zeros(1, N_res);
-  
-  for n = 1:N_resonator_states
-    s += state(n) * resonator_states(n,:);
+  for n = 1:N_res
+    density(n) = expectation_value(state, resonator_number(n));
   end
 end
 
-function ind = resonator_state_index(state)
+%returns the row number for 'fock_state' in 'resonator_states' matrix
+function ind = resonator_state_index(fock_state)
   global resonator_states;
   for n = 1:size(resonator_states)(1)
-    if isequal(resonator_states(n,:),state)
+    if isequal(resonator_states(n,:),fock_state)
       ind = n;
     end
   end
 end
 
 
-% takes a population like [1,1,0,0] (first two QBs in excited state, second two in ground state) and returns the equivilent state
-% only works for the values in the array of states, not superpositions of them
-function s = density_to_QB_state(density)
+% takes a fock_state like [1,1,0,0] (first two QBs in excited state, second two in ground state) and returns the equivilent state
+% doesn't work on superpositions of fock_states not superpositions of them
+function s = fock_state_to_QB_state(fock_state)
   global N_res; %that's how many QBs we have
 
   s = [1];
 
   for n = 1:N_res
-    if density(n) == 1
-      s = kron(s,[0;1]);
+    if fock_state(n) == 1
+      s = kron(s,[0;1]); %'n'th resonator in excited state
     else
-      s = kron(s,[1;0]);
+      s = kron(s,[1;0]); %'n'th resonator in gnd state
     end
   end
 end
@@ -119,32 +123,23 @@ end
 %reverse of previous function; will work on fractional states
 function s = QB_state_to_density(state)
   global N_res;
-
+  for n = 1:N_res
+    density(n) = expectation_value(state, QB_number(n));
+  end
 end
 
-%gives the state of the whole system from populations in the resonators and QBs
-function s = density_to_state(res_density,QB_density)
-  s = kron(density_to_resonator_state(res_density),density_to_QB_state(QB_density));
+%gives the state of the whole system from fock_states for resonators and QBs
+function s = density_to_state(res_fock,QB_fock)
+  s = kron(fock_state_to_resonator_state(res_fock),fock_state_to_QB_state(QB_fock));
 end
 
 %gives the expected number of photons in each resonator for an given state
 function density = state_to_resonator_desnity(state)
-  global N_resonator_states;
   global N_res;
-  global resonator_states;
 
-  %the following commented out code is faster than the uncommented out code but only works in the case where all QBs are in gnd state
-%    density = zeros(1,N_res);
-%  
-%    for n = 1:N_resonator_states;
-%      prob = abs(state * density_to_state(resonator_states(n,:),[0,0,0,0]))^2; %probability we're in the 'n'th resonator fock state
-%      density += resonator_states(n,:) * prob;
-%    end
-
-  %find density using expectation values of the number operators
   for n = 1:N_res
     N_op = kron(resonator_number(n),eye(2^N_res));
-    density(n) = real(conj(state)*(N_op*transpose(state))); %use 'real' because small small imag part remains
+    density(n) = expectation_value(state, N_op);
   end
 end
 
@@ -152,30 +147,20 @@ end
 function density = state_to_QB_desnity(state)
   global N_resonator_states;
   global N_res;
-  global resonator_states;
 
   for n = 1:N_res
     N_op = kron(eye(N_resonator_states),QB_number(n));
-    density(n) = real(conj(state)*(N_op*transpose(state))); %use 'real' because small small imag part remains
+    density(n) = expectation_value(state, N_op);
   end
 end
 
-function ind = resonator_state_index(state)
-  global resonator_states;
-  for n = 1:size(resonator_states)(1)
-    if isequal(resonator_states(n,:),state)
-      ind = n;
-    end
-  end
-end
-
-%next two functions are helper functions; they return the new state after adding or removing a photon form a given resonator
-function st = inc_resonator_state(state, res_index)
-  st = state(res_index) += 1;
+%next two functions are helper functions; they return the fock state resulting from adding or removing a photon form a given resonator
+function st = inc_resonator_fock_state(state, res_index)
+  state(res_index) += 1;
   st = state;
 end
 
-function st = dec_resonator_state(state, res_index)
+function st = dec_resonator_fock_state(state, res_index)
   state(res_index) -= 1;
   st = state;
 end
@@ -190,7 +175,7 @@ function m = resonator_annihilation(res_index)
   m = zeros(N_resonator_states, N_resonator_states);
 
   for state = 1:(N_resonator_states-nchoosek(N_res+N_ph-1,N_ph)) %only consider the states with less than N_ph photons
-    m(state,resonator_state_index(inc_resonator_state(resonator_states(state,:),res_index))) = sqrt(1+resonator_states(state,:)(res_index));
+    m(state,resonator_state_index(inc_resonator_fock_state(resonator_states(state,:),res_index))) = sqrt(1+resonator_states(state,:)(res_index));
   end
 
 end
@@ -205,18 +190,19 @@ function m = resonator_creation(res_index)
 
   for state = 2:(N_resonator_states) %only consider the states with one or more photons
     if resonator_states(state,:)(res_index) > 0 %can't lower from a state that has nothing in it
-      m(state,resonator_state_index(dec_resonator_state(resonator_states(state,:),res_index))) = sqrt(resonator_states(state,:)(res_index));
+      m(state,resonator_state_index(dec_resonator_fock_state(resonator_states(state,:),res_index))) = sqrt(resonator_states(state,:)(res_index));
     end
   end
 
 end
 
+%number operator on 'res_index'th resonator
 function m = resonator_number(res_index)
   m = resonator_creation(res_index)*resonator_annihilation(res_index);
 end
 
 %the creation operator for the 'QB_index'th QB
-%the idea is that we just kroneker product the 2x2 creation matrix for the QB with identity QBs for the others
+%the idea is that we just kroneker product the 2x2 creation matrix for the 'QB_index'th QB with identity QBs for the others
 function m = QB_creation(QB_index)
   global N_res; %that's how many QBs we have
 
@@ -245,14 +231,17 @@ function m = QB_annihilation(QB_index)
   end
 end
 
+%number operator on 'QB_index'th QB
 function m = QB_number(QB_index)
   m = QB_creation(QB_index)*QB_annihilation(QB_index);
 end
 
+%sum of individual QB_number operators
 function m = total_QB_number
   global N_res;
-  m = QB_creation(1)*QB_annihilation(1);
-  for n = 2:N_res
+  m = 0;
+
+  for n = 1:N_res
     m += QB_creation(n)*QB_annihilation(n);
   end
 end
@@ -281,6 +270,13 @@ function H = resonator_hamiltonian
   end
 end
 
+function H = QB_hamiltonian
+  global h_bar;
+  global wQB;
+
+  H = h_bar*wQB*total_QB_number;
+end
+
 %the hamiltonian for the whole system, with 'interacting' being the lists of QBs coupled to their resonators
 %For example, interacting=[1,3,4] would mean QBs 1,3, and 4 are coupled to their resonators
 function H = hamiltonian(interacting=[])
@@ -295,16 +291,17 @@ function H = hamiltonian(interacting=[])
   global resonator_states;
 
   H_res = resonator_hamiltonian;
+  H_QB  = QB_hamiltonian;
   I_res = eye(N_resonator_states);
   I_qb  = eye(2^N_res);
-  N_QB = total_QB_number;
 
-  H = kron(H_res, I_qb) + kron(I_res,h_bar*wQB*N_QB);%this is the hamiltonain not including interaction between QBs and resonators
+  H = kron(H_res, I_qb) + kron(I_res,H_QB);%this is the hamiltonain not including interaction between QBs and resonators
+
+  %now, add in the requested interaction(s)
   for n = 1:size(interacting)(2)
     index = interacting(n);
     H += h_bar*wInt*(kron(resonator_annihilation(index), QB_creation(index)) + kron(resonator_creation(index), QB_annihilation(index)));
   end
-
 end
 
 
