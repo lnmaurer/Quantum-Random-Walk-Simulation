@@ -148,6 +148,18 @@ function density = state_to_resonator_desnity(state)
   end
 end
 
+%gives the expected number of photons in each resonator for an given state
+function density = state_to_QB_desnity(state)
+  global N_resonator_states;
+  global N_res;
+  global resonator_states;
+
+  for n = 1:N_res
+    N_op = kron(eye(N_resonator_states),QB_number(n));
+    density(n) = real(conj(state)*(N_op*transpose(state))); %use 'real' because small small imag part remains
+  end
+end
+
 function ind = resonator_state_index(state)
   global resonator_states;
   for n = 1:size(resonator_states)(1)
@@ -234,7 +246,7 @@ function m = QB_annihilation(QB_index)
 end
 
 function m = QB_number(QB_index)
-  m = QB_creation(res_index)*QB_annihilation(QB_index);
+  m = QB_creation(QB_index)*QB_annihilation(QB_index);
 end
 
 function m = total_QB_number
@@ -288,7 +300,6 @@ function H = hamiltonian(interacting=[])
   N_QB = total_QB_number;
 
   H = kron(H_res, I_qb) + kron(I_res,h_bar*wQB*N_QB);%this is the hamiltonain not including interaction between QBs and resonators
-  %CHECK FOR BUG: DON'T ALLOW PHOTON TO GO IN TO QB IF QB IS ALREADY EXCITED
   for n = 1:size(interacting)(2)
     index = interacting(n);
     H += h_bar*wInt*(kron(resonator_annihilation(index), QB_creation(index)) + kron(resonator_creation(index), QB_annihilation(index)));
