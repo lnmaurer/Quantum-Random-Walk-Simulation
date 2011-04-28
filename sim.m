@@ -270,6 +270,7 @@ function H = resonator_hamiltonian
   end
 end
 
+%hamiltonian for just the QB part of the system
 function H = QB_hamiltonian
   global h_bar;
   global wQB;
@@ -304,15 +305,8 @@ function H = hamiltonian(interacting=[])
   end
 end
 
-
-function decompose(resonator_hamiltonian)
-  global N
-
-end
-
 %evolves 'initial_state' for time 't' with indicies of interacting QBs given in 'interacting'
-%NOT USEFUL AT PRESENT FOR USE AT MULTIPLE TIMES; TAKE ARGUMENTS LIKE LINSPACE???
-function psi = evolve(initial_state,t,interacting=[])
+function psi = evolve(state,t,interacting=[])
   global H0;
   global Hi1;
   global Hi2;
@@ -320,5 +314,38 @@ function psi = evolve(initial_state,t,interacting=[])
 
   H = hamiltonian(interacting);
 
-  psi = expm(-i*(H*t)/h_bar)*initial_state;
+  %method 1, decompose state in to the eigenvectors of 'H', then evolve those -- this seems to be fastest, especially for more than one time value
+
+  [eig_vectors,D] = eig(H);
+  eig_values = diag(D);
+  psi = zeros(size(H)(1),size(t)(2)); %number of rows equal to number of states, number of columns equal to number of times
+  for n = 1:size(eig_vectors)(1)
+    projection = eig_vectors(:,n) * (eig_vectors(:,n)'*state); %projection of 'state' on to 'n'th eigenvector
+    for m = 1:size(t)(2)
+      psi(:,m) += exp(-i*eig_values(n)*t(m)/h_bar)*projection; %evolve weighted 'n'th eigenvector and add to results
+    end
+  end
+  %method 2, exponentiate the matrix -- this seems to be slower; would need to rewrite to handle 't' being an array
+%    psi = expm(-i*(H*t)/h_bar)*state;
+end;
+
+%evolves 'initial_state' to times [0,dt,2*dt,...,(npoints-1)*dt] with indicies of interacting QBs given in 'interacting'
+%this function works by exponentiating a matrix; that's a high fixed time cost, but it only has to be done once because
+%the times are easilly space, so this can be faster than the previous function if you're dealing with many evenly spaced
+%time steps
+function psi = evolve_linspaced_t(state,dt,npoints,interacting=[])
+  global H0;
+  global Hi1;
+  global Hi2;
+  global h_bar;
+
+  H = hamiltonian(interacting);
+
+  ev = expm(-i*H*dt/h_bar);
+
+  psi(:,1) = state;
+
+  for n = 2:npoints
+    psi(:,n) = ev*psi(:,n-1);
+  end
 end;
