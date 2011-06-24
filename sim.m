@@ -6,11 +6,11 @@
 %NOTES:
 %-states are column vectors
 %-densities/populations/whatever-you-want-to-call-them and straight up fock states are row vectors
+%-when I say 'state' I mean state of the full system, 'resonator state' and 'QB state' refer to the states of those parts of the system
 
 %constants
 global N_ph = 2; %consider up to this many photons
 global N_res = 2; %number of resonators to consider
-%For debugging purposes, I've put in simple numbers for the following constants
 global h_bar = 1.05457148e-34;
 global w0 = 2*pi*5e9; %resonator resonance frequency 
 global wQB = 2*pi*5e9; %QB resonance frequency
@@ -21,7 +21,7 @@ global resonator_states; %run generate_resonator_states to populate
 
 
 function ev = expectation_value(state, operator)
-  ev = real(state'*(operator*state)); %use 'real' because small small imag part remains
+  ev = real(state'*(operator*state)); %use 'real' because small small imag part often remains due to rounding errors
 end
 
 
@@ -133,7 +133,7 @@ function s = density_to_state(res_fock,QB_fock)
   s = kron(fock_state_to_resonator_state(res_fock),fock_state_to_QB_state(QB_fock));
 end
 
-%gives the expected number of photons in each resonator for an state or states
+%gives the expected number of photons in each resonator for a state or states
 function densities = state_to_resonator_desnity(states)
   global N_res;
 
@@ -150,7 +150,7 @@ function densities = state_to_resonator_desnity(states)
   end
 end
 
-%gives the expected number of photons in each resonator for an given state
+%gives the expected number of photons in each resonator for a state or states
 function densities = state_to_QB_desnity(states)
   global N_resonator_states;
   global N_res;
@@ -365,37 +365,56 @@ function psi = evolve_linspaced_t(state,stop_time,npoints,interacting=[])
   end
 end;
 
-function js = HM(wait_time)
-  global h_bar;
-  global wInt;
-
-  %TODO: MAKE ALL THIS GENERAL
-  psi = density_to_state([0,0],[1,1]);
-  psi = expm(-i*hamiltonian([1,2])*10e-9/h_bar)*psi; %swap from QBs to resonators
-  psi = expm(-i*hamiltonian()*wait_time/h_bar)*psi; %wait with photons in resonators
-  psi = expm(-i*hamiltonian([1,2])*10e-9/h_bar)*psi; %swap back from resonators to QBs
-
-  p11 = abs(psi'*density_to_state([0,0],[1,1]))^2;
-  p01 = abs(psi'*density_to_state([0,0],[0,1]))^2;
-  p10 = abs(psi'*density_to_state([0,0],[1,0]))^2;
-
-  js = p11/p01/p10;
+function ps = prob_in_fock_state(states, resonator_fock_state, QB_fock_state)
+  ps = [];
+  fock_state = density_to_state(resonator_fock_state,QB_fock_state);
+  for state = states
+    ps = [ps , abs(state'*fock_state)^2];
+  end
 end
   
-function p = ps(wait_time)
+%TODO: MAKE ALL THIS GENERAL
+function probs = ps(wait_times)
   global h_bar;
   global wInt;
 
-  %TODO: MAKE ALL THIS GENERAL
-  psi = density_to_state([0,0],[1,1]);
-  psi = expm(-i*hamiltonian([1,2])*10e-9/h_bar)*psi; %swap from QBs to resonators
-  psi = expm(-i*hamiltonian()*wait_time/h_bar)*psi; %wait with photons in resonators
-  psi = expm(-i*hamiltonian([1,2])*10e-9/sqrt(2)/h_bar)*psi; %swap back from resonators to QBs
+  initial_state = density_to_state([0,0],[1,1]);
+  swap_in = expm(-i*hamiltonian([1,2])*10e-9/h_bar);
+%    swap_out = expm(-i*hamiltonian([1,2])*10e-9/sqrt(2)/h_bar);
 
-  p(1) = abs(psi'*density_to_state([0,0],[1,1]))^2;
-  p(2) = abs(psi'*density_to_state([1,0],[0,1]))^2 + abs(psi'*density_to_state([0,1],[0,1]))^2;
-  p(3) = abs(psi'*density_to_state([1,0],[1,0]))^2 + abs(psi'*density_to_state([0,1],[1,0]))^2;
-  p(4) = abs(psi'*density_to_state([1,1],[0,0]))^2;
-  p(5) = abs(psi'*density_to_state([2,0],[0,0]))^2;
-  p(6) = abs(psi'*density_to_state([0,2],[0,0]))^2;
+  final_states = [];
+  for wait_time = wait_times
+    wait = expm(-i*hamiltonian()*wait_time/h_bar);
+%      final_states = [final_states, swap_out*wait*swap_in * initial_state];
+    final_states = [final_states, wait*swap_in * initial_state];
+  end
+
+  probs = [];
+  probs = [probs; prob_in_fock_state(final_states, [0,0], [1,1])];
+  probs = [probs; prob_in_fock_state(final_states, [1,0], [0,1]) + prob_in_fock_state(final_states, [0,1], [0,1])];
+  probs = [probs; prob_in_fock_state(final_states, [1,0], [1,0]) + prob_in_fock_state(final_states, [0,1], [1,0])];
+  probs = [probs; prob_in_fock_state(final_states, [1,1], [0,0])];
+  probs = [probs; prob_in_fock_state(final_states, [2,0], [0,0])];
+  probs = [probs; prob_in_fock_state(final_states, [0,2], [0,0])];
+end
+
+%simulates Hong–Ou–Mandel experiment
+function g2 = HOM(wait_times)
+  global h_bar;
+  global wInt;
+
+  initial_state = density_to_state([0,0],[1,1]);
+  swap_in = expm(-i*hamiltonian([1,2])*10e-9/h_bar);
+  swap_out = expm(-i*hamiltonian([1,2])*10e-9/h_bar);
+
+  final_states = [];
+  for wait_time = wait_times
+    wait = expm(-i*hamiltonian()*wait_time/h_bar);
+    final_states = [final_states, swap_out*wait*swap_in * initial_state];
+  end
+
+  P1A = prob_in_fock_state(final_states, [0,0], [1,1]) + prob_in_fock_state(final_states, [1,0], [0,1]) + prob_in_fock_state(final_states, [0,1], [0,1]);
+  P1B = prob_in_fock_state(final_states, [0,0], [1,1]) + prob_in_fock_state(final_states, [1,0], [1,0]) + prob_in_fock_state(final_states, [0,1], [1,0]);
+  P11 = prob_in_fock_state(final_states, [0,0], [1,1]);
+  g2 = P11./P1A./P1B;
 end
