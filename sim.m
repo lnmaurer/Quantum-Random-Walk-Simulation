@@ -9,13 +9,13 @@
 
 %constants
 global N_ph = 2; %consider up to this many photons
-global N_res = 4; %number of resonators to consider
+global N_res = 2; %number of resonators to consider
 %For debugging purposes, I've put in simple numbers for the following constants
-global h_bar = 1;%1.05457148e-34;
-global w0 = 10;%2*pi*5e9; %resonator resonance frequency 
-global wQB = 10;%2*pi*5e9; %QB resonance frequency
-global wInt = 1;%2*pi*250e6; %interaction between QB and resonators
-global Wcoup = 1;%2*pi*250e6; %coupling between resonators
+global h_bar = 1.05457148e-34;
+global w0 = 2*pi*5e9; %resonator resonance frequency 
+global wQB = 2*pi*5e9; %QB resonance frequency
+global wInt = 2*pi*1/10e-9/4; %interaction between QB and resonators
+global Wcoup = 2*pi*1/100e-9/4; %coupling between resonators
 global N_resonator_states; %run generate_resonator_states to populate
 global resonator_states; %run generate_resonator_states to populate
 
@@ -133,24 +133,38 @@ function s = density_to_state(res_fock,QB_fock)
   s = kron(fock_state_to_resonator_state(res_fock),fock_state_to_QB_state(QB_fock));
 end
 
-%gives the expected number of photons in each resonator for an given state
-function density = state_to_resonator_desnity(state)
+%gives the expected number of photons in each resonator for an state or states
+function densities = state_to_resonator_desnity(states)
   global N_res;
 
-  for n = 1:N_res
-    N_op = kron(resonator_number(n),eye(2^N_res));
-    density(n) = expectation_value(state, N_op);
+  for n = 1:N_res %generate all the number operators we'll need
+    N_op{n} = kron(resonator_number(n),eye(2^N_res));
+  end
+
+  densities = [];
+  for state = states %iterate over the states
+    for n = 1:N_res %find the denisty for the state we're on
+      density(n) = expectation_value(state, N_op{n});
+    end
+    densities = [densities; density];%add the denisty we found to the matrix of all densities
   end
 end
 
 %gives the expected number of photons in each resonator for an given state
-function density = state_to_QB_desnity(state)
+function densities = state_to_QB_desnity(states)
   global N_resonator_states;
   global N_res;
 
   for n = 1:N_res
-    N_op = kron(eye(N_resonator_states),QB_number(n));
-    density(n) = expectation_value(state, N_op);
+    N_op{n} = kron(eye(N_resonator_states),QB_number(n));
+  end
+
+  densities = [];
+  for state = states %iterate over the states
+    for n = 1:N_res %find the denisty for the state we're on
+      density(n) = expectation_value(state, N_op{n});
+    end
+    densities = [densities; density];%add the denisty we found to the matrix of all densities
   end
 end
 
@@ -315,7 +329,6 @@ function psi = evolve(state,t,interacting=[])
   H = hamiltonian(interacting);
 
   %method 1, decompose state in to the eigenvectors of 'H', then evolve those -- this seems to be fastest, especially for more than one time value
-
   [eig_vectors,D] = eig(H);
   eig_values = diag(D);
   psi = zeros(size(H)(1),size(t)(2)); %number of rows equal to number of states, number of columns equal to number of times
@@ -325,21 +338,23 @@ function psi = evolve(state,t,interacting=[])
       psi(:,m) += exp(-i*eig_values(n)*t(m)/h_bar)*projection; %evolve weighted 'n'th eigenvector and add to results
     end
   end
+
   %method 2, exponentiate the matrix -- this seems to be slower; would need to rewrite to handle 't' being an array
 %    psi = expm(-i*(H*t)/h_bar)*state;
 end;
 
-%evolves 'initial_state' to times [0,dt,2*dt,...,(npoints-1)*dt] with indicies of interacting QBs given in 'interacting'
-%this function works by exponentiating a matrix; that's a high fixed time cost, but it only has to be done once because
-%the times are easilly space, so this can be faster than the previous function if you're dealing with many evenly spaced
-%time steps
-function psi = evolve_linspaced_t(state,dt,npoints,interacting=[])
+%evolves 'initial_state' to times [0,stop_time/(npoints-1),2*stop_time/(npoints-1),...,stop_time] with indicies of
+%interacting QBs given in 'interacting' this function works by exponentiating a matrix; that's a high fixed time cost,
+%but it only has to be done once because the times are easilly space, so this can be faster than the previous
+%function if you're dealing with many evenly spaced time steps
+function psi = evolve_linspaced_t(state,stop_time,npoints,interacting=[])
   global H0;
   global Hi1;
   global Hi2;
   global h_bar;
 
   H = hamiltonian(interacting);
+  dt = stop_time/(npoints-1);
 
   ev = expm(-i*H*dt/h_bar);
 
@@ -349,3 +364,38 @@ function psi = evolve_linspaced_t(state,dt,npoints,interacting=[])
     psi(:,n) = ev*psi(:,n-1);
   end
 end;
+
+function js = HM(wait_time)
+  global h_bar;
+  global wInt;
+
+  %TODO: MAKE ALL THIS GENERAL
+  psi = density_to_state([0,0],[1,1]);
+  psi = expm(-i*hamiltonian([1,2])*10e-9/h_bar)*psi; %swap from QBs to resonators
+  psi = expm(-i*hamiltonian()*wait_time/h_bar)*psi; %wait with photons in resonators
+  psi = expm(-i*hamiltonian([1,2])*10e-9/h_bar)*psi; %swap back from resonators to QBs
+
+  p11 = abs(psi'*density_to_state([0,0],[1,1]))^2;
+  p01 = abs(psi'*density_to_state([0,0],[0,1]))^2;
+  p10 = abs(psi'*density_to_state([0,0],[1,0]))^2;
+
+  js = p11/p01/p10;
+end
+  
+function p = ps(wait_time)
+  global h_bar;
+  global wInt;
+
+  %TODO: MAKE ALL THIS GENERAL
+  psi = density_to_state([0,0],[1,1]);
+  psi = expm(-i*hamiltonian([1,2])*10e-9/h_bar)*psi; %swap from QBs to resonators
+  psi = expm(-i*hamiltonian()*wait_time/h_bar)*psi; %wait with photons in resonators
+  psi = expm(-i*hamiltonian([1,2])*10e-9/sqrt(2)/h_bar)*psi; %swap back from resonators to QBs
+
+  p(1) = abs(psi'*density_to_state([0,0],[1,1]))^2;
+  p(2) = abs(psi'*density_to_state([1,0],[0,1]))^2 + abs(psi'*density_to_state([0,1],[0,1]))^2;
+  p(3) = abs(psi'*density_to_state([1,0],[1,0]))^2 + abs(psi'*density_to_state([0,1],[1,0]))^2;
+  p(4) = abs(psi'*density_to_state([1,1],[0,0]))^2;
+  p(5) = abs(psi'*density_to_state([2,0],[0,0]))^2;
+  p(6) = abs(psi'*density_to_state([0,2],[0,0]))^2;
+end
