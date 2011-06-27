@@ -21,8 +21,8 @@ global w0 = 2*pi*5e9; %resonator resonance frequency
 global wQB = 2*pi*5e9; %QB resonance frequency
 global wInt = 2*pi*1/10e-9/4; %interaction between QB and resonators
 global Wcoup = 2*pi*1/100e-9/4; %coupling between resonators
-global resRelaxationRate = 600e-9; %resonator relaxtion rate A RELAXATION RATE OF <=0 TURNS OF RELAXATION
-global QBRelaxationRate = 200e-9; %resonator relaxtion rate A RELAXATION RATE OF <=0 TURNS OF RELAXATION
+global resRelaxationTime = 600e-9; %resonator relaxtion rate A RELAXATION RATE OF <=0 TURNS OF RELAXATION
+global QBRelaxationTime = 200e-9; %resonator relaxtion rate A RELAXATION RATE OF <=0 TURNS OF RELAXATION
 global N_resonator_states; %run generate_resonator_states to populate
 global resonator_states; %run generate_resonator_states to populate
 
@@ -425,8 +425,8 @@ function DMs = relax_evolve_DM_linspaced_t(initial_DM,stop_time,npoints,interact
   global N_res;
   global N_resonator_states;
   global N_ph;
-  global QBRelaxationRate;
-  global resRelaxationRate;
+  global QBRelaxationTime;
+  global resRelaxationTime;
   global resonator_states;
 
   H = hamiltonian(interacting);
@@ -443,7 +443,7 @@ function DMs = relax_evolve_DM_linspaced_t(initial_DM,stop_time,npoints,interact
   E1s = {};
 
   %make the E0 and E1 Kruas operators for amplitude damping of the qubits (see Nielsen & Chuang eqn 8.108, p 380)
-  P_QB_relax = 1-exp(-dt/QBRelaxationRate); 
+  P_QB_relax = 1-exp(-dt/QBRelaxationTime); 
   for n = 1:N_res
     E0s{n} = [1];
     E1s{n} = [1];
@@ -462,30 +462,30 @@ function DMs = relax_evolve_DM_linspaced_t(initial_DM,stop_time,npoints,interact
   end
 
   %make the E0 and E1 Kruas operators for amplitude damping of the resonators (see Nielsen & Chuang eqn 8.108, p 380)
-%    for n = 1:N_resonator_states
-%      for m = 1:N_res
-%        num_photons = resonator_states(n,m);
-%        if num_photons > 0
-%  	P_res_relax = 1-exp(-dt/resRelaxationRate/num_photons); %relaxation rate increases linearly with number of photons
-%  	%'relaxing_from' is the index of the state we're currently in
-%  	relaxing_from = n;
-%  	%'relaxing_to' is the index of the state we're relaxing to
-%  	relaxing_to = resonator_state_index(dec_resonator_fock_state(resonator_states(relaxing_from,:),m)); %we're relaxing resonator m
-%  	%E0 is all ones on the diagonal except it's sqrt(1-P_res_relax) for the state that's relaxing (that state has index 'n')
-%  	E0_temp = diag(ones(1,N_resonator_states));
-%  	E0_temp(relaxing_from,relaxing_from) = sqrt(1-P_res_relax);
-%  	%E1 is all zeros except it's sqrt(P_res_relax) connecting the state that's relaxing to the state it's relaxing to
-%  	E1_temp = zeros(N_resonator_states, N_resonator_states);
-%  	E1_temp(relaxing_to,relaxing_from) = sqrt(P_res_relax);
-%  	%turn them in to operators that can act on the full density matrix
-%  	E0_temp = kron(E0_temp, I_qb);
-%  	E1_temp = kron(E1_temp, I_qb);
-%  	%put them in the cell array
-%  	E0s = [E0s, {E0_temp}];
-%  	E1s = [E1s, {E1_temp}];
-%        end
-%      end
-%    end
+  for n = 1:N_resonator_states
+    for m = 1:N_res
+      num_photons = resonator_states(n,m);
+      if num_photons > 0
+	P_res_relax = 1-exp(-dt*num_photons/resRelaxationTime); %relaxation time decreases like 1/(number of photons)
+	%'relaxing_from' is the index of the state we're currently in
+	relaxing_from = n;
+	%'relaxing_to' is the index of the state we're relaxing to
+	relaxing_to = resonator_state_index(dec_resonator_fock_state(resonator_states(relaxing_from,:),m)); %we're relaxing resonator m
+	%E0 is all ones on the diagonal except it's sqrt(1-P_res_relax) for the state that's relaxing (that state has index 'n')
+	E0_temp = diag(ones(1,N_resonator_states));
+	E0_temp(relaxing_from,relaxing_from) = sqrt(1-P_res_relax);
+	%E1 is all zeros except it's sqrt(P_res_relax) connecting the state that's relaxing to the state it's relaxing to
+	E1_temp = zeros(N_resonator_states, N_resonator_states);
+	E1_temp(relaxing_to,relaxing_from) = sqrt(P_res_relax);
+	%turn them in to operators that can act on the full density matrix
+	E0_temp = kron(E0_temp, I_qb);
+	E1_temp = kron(E1_temp, I_qb);
+	%put them in the cell array
+	E0s = [E0s, {E0_temp}];
+	E1s = [E1s, {E1_temp}];
+      end
+    end
+  end
 
   DMs{1} = initial_DM;
 
@@ -545,5 +545,36 @@ function g2 = HOM(wait_times)
   P1B = prob_state_in_fock_state(final_states, [0,0], [1,1]) + prob_state_in_fock_state(final_states, [1,0], [1,0]) + prob_state_in_fock_state(final_states, [0,1], [1,0]);
   %probability both junctions are excited
   P11 = prob_state_in_fock_state(final_states, [0,0], [1,1]);
+  g2 = P11./P1A./P1B;
+end
+
+%simulates Hong–Ou–Mandel experiment for two resonators and two qubits
+%it returns g2, the joint switching probabilities divided by the individual switching probabilities (P11/P1A/P1B)
+%'wait_times' is the array of times you want g2 at
+function g2 = HOMrelax(wait_length)
+  global h_bar;
+  global wInt;
+
+  set_resonator_states(2, 2);
+
+  QB_swap_t = 2*pi*1/wInt/4;
+
+  initial_DM = fock_to_DM([0,0],[1,1]);
+  after_swap_in = relax_evolve_DM_linspaced_t(initial_DM,QB_swap_t,QB_swap_t/10e-12,[1,2]){end};
+  after_wait_times = relax_evolve_DM_linspaced_t(after_swap_in,wait_length,wait_length/10e-12);
+  after_wait_times = after_wait_times(1:500:end); %throw out 499/500 points TODO: DO THIS MORE CLEANLY; ADD OPTION
+
+  after_swapping_out = {};
+  for aw = after_wait_times
+    after_swapping_out = [after_swapping_out, {relax_evolve_DM_linspaced_t(aw{1},QB_swap_t/sqrt(2),QB_swap_t/sqrt(2)/10e-12,[1,2]){end}}];
+  end
+
+
+  %probability junction A is excited
+  P1A = prob_DM_in_fock_state(after_swapping_out, [0,0], [1,1]) + prob_DM_in_fock_state(after_swapping_out, [1,0], [0,1]) + prob_DM_in_fock_state(after_swapping_out, [0,1], [0,1]);
+  %probability junction B is excited
+  P1B = prob_DM_in_fock_state(after_swapping_out, [0,0], [1,1]) + prob_DM_in_fock_state(after_swapping_out, [1,0], [1,0]) + prob_DM_in_fock_state(after_swapping_out, [0,1], [1,0]);
+  %probability both junctions are excited
+  P11 = prob_DM_in_fock_state(after_swapping_out, [0,0], [1,1]);
   g2 = P11./P1A./P1B;
 end
