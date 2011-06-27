@@ -11,6 +11,7 @@
 %-expected values (EVs) and straight up fock states are row vectors
 %-when I say 'state' I mean state of the full system, 'resonator state' and 'QB state' refer to the states of those parts of the system
 %-density matrices are stored in cell arrays
+%-for operators that act on states of the full system, the correct order is kron(resonator operator, QB operator)
 
 %constants
 global N_ph = 2; %consider up to this many photons
@@ -415,6 +416,84 @@ function DMs = evolve_DM_linspaced_t(initial_DM,stop_time,npoints,interacting=[]
 
   for n = 2:npoints
     DMs{n} = evL*DMs{n-1}*evR;
+  end
+end;
+
+%ONLY EVOLUTION FUNCTION THAT SUPPORTS RELAXATION!!
+function DMs = relax_evolve_DM_linspaced_t(initial_DM,stop_time,npoints,interacting=[])
+  global h_bar;
+  global N_res;
+  global N_resonator_states;
+  global N_ph;
+  global QBRelaxationRate;
+  global resRelaxationRate;
+  global resonator_states;
+
+  H = hamiltonian(interacting);
+  dt = stop_time/(npoints-1);
+
+  evL = expm(-i*H*dt/h_bar);
+  evR = evL';
+  
+  I_res = eye(N_resonator_states);
+  I_qb  = eye(2^N_res);
+
+  %store the E0 and E1 operators
+  E0s = {};
+  E1s = {};
+
+  %make the E0 and E1 Kruas operators for amplitude damping of the qubits (see Nielsen & Chuang eqn 8.108, p 380)
+  P_QB_relax = 1-exp(-dt/QBRelaxationRate); 
+  for n = 1:N_res
+    E0s{n} = [1];
+    E1s{n} = [1];
+    for m = 1:N_res
+      if m == n
+	E0s{n} = kron(E0s{n},[1,0;0,sqrt(1-P_QB_relax)]);
+	E1s{n} = kron(E1s{n},[0,sqrt(P_QB_relax);0,0]);
+      else
+	E0s{n} = kron(E0s{n},eye(2));
+	E1s{n} = kron(E1s{n},eye(2));
+      end
+    end
+    %turn them in to operators that can act on the full density matrix
+    E0s{n} = kron(I_res, E0s{n});
+    E1s{n} = kron(I_res, E1s{n});
+  end
+
+  %make the E0 and E1 Kruas operators for amplitude damping of the resonators (see Nielsen & Chuang eqn 8.108, p 380)
+%    for n = 1:N_resonator_states
+%      for m = 1:N_res
+%        num_photons = resonator_states(n,m);
+%        if num_photons > 0
+%  	P_res_relax = 1-exp(-dt/resRelaxationRate/num_photons); %relaxation rate increases linearly with number of photons
+%  	%'relaxing_from' is the index of the state we're currently in
+%  	relaxing_from = n;
+%  	%'relaxing_to' is the index of the state we're relaxing to
+%  	relaxing_to = resonator_state_index(dec_resonator_fock_state(resonator_states(relaxing_from,:),m)); %we're relaxing resonator m
+%  	%E0 is all ones on the diagonal except it's sqrt(1-P_res_relax) for the state that's relaxing (that state has index 'n')
+%  	E0_temp = diag(ones(1,N_resonator_states));
+%  	E0_temp(relaxing_from,relaxing_from) = sqrt(1-P_res_relax);
+%  	%E1 is all zeros except it's sqrt(P_res_relax) connecting the state that's relaxing to the state it's relaxing to
+%  	E1_temp = zeros(N_resonator_states, N_resonator_states);
+%  	E1_temp(relaxing_to,relaxing_from) = sqrt(P_res_relax);
+%  	%turn them in to operators that can act on the full density matrix
+%  	E0_temp = kron(E0_temp, I_qb);
+%  	E1_temp = kron(E1_temp, I_qb);
+%  	%put them in the cell array
+%  	E0s = [E0s, {E0_temp}];
+%  	E1s = [E1s, {E1_temp}];
+%        end
+%      end
+%    end
+
+  DMs{1} = initial_DM;
+
+  for n = 2:npoints
+    DMs{n} = evL*DMs{n-1}*evR; %evolve one timestep
+    for m = 1:size(E0s)(2) %loop over all the relaxation operators
+      DMs{n} = E0s{m}*DMs{n}*(E0s{m}') + E1s{m}*DMs{n}*(E1s{m}');
+    end
   end
 end;
 
