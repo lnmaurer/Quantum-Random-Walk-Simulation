@@ -3,10 +3,14 @@
 %For example, there are seperate creation/annihilation operators for QBs and resonators.
 %Later, these get combined with the Kronecker tensor product to form operators for the whole system.
 
+%The first section of the code is a bunch of functions that do useful things (like evolve states).
+%The second section uses that code to simulate experiments.
+
 %NOTES:
 %-states are column vectors
-%-densities/populations/whatever-you-want-to-call-them and straight up fock states are row vectors
+%-expected values (EVs) and straight up fock states are row vectors
 %-when I say 'state' I mean state of the full system, 'resonator state' and 'QB state' refer to the states of those parts of the system
+%-density matrices are stored in cell arrays
 
 %constants
 global N_ph = 2; %consider up to this many photons
@@ -16,14 +20,20 @@ global w0 = 2*pi*5e9; %resonator resonance frequency
 global wQB = 2*pi*5e9; %QB resonance frequency
 global wInt = 2*pi*1/10e-9/4; %interaction between QB and resonators
 global Wcoup = 2*pi*1/100e-9/4; %coupling between resonators
+global resRelaxationRate = 600e-9; %resonator relaxtion rate A RELAXATION RATE OF <=0 TURNS OF RELAXATION
+global QBRelaxationRate = 200e-9; %resonator relaxtion rate A RELAXATION RATE OF <=0 TURNS OF RELAXATION
 global N_resonator_states; %run generate_resonator_states to populate
 global resonator_states; %run generate_resonator_states to populate
 
+%%%%%%%%%%%%%%%%%%% USEFUL FUNCTIONS %%%%%%%%%%%%%%%%%%%
 
-function ev = expectation_value(state, operator)
-  ev = real(state'*(operator*state)); %use 'real' because small small imag part often remains due to rounding errors
+function ev = state_expectation_value(state, operator)
+  ev = abs(state'*(operator*state)); %use 'abs' because small small imag part often remains due to rounding errors
 end
 
+function ev = DM_expectation_value(DM, operator)
+  ev = abs(trace(DM*operator)); %use 'abs' because small small imag part often remains due to rounding errors
+end
 
 %generates a matrix that contains the possible Fock states in rows; the number in row n is the number of photons in resonator n
 %this function needs to be called before anything else
@@ -76,6 +86,17 @@ function generate_resonator_states
   end
 end
 
+function set_resonator_states(new_N_ph, new_N_res)
+  global N_ph; %consider up to this many photons
+  global N_res; %number of resonators to consider
+
+  if (N_ph != new_N_ph) || (N_res != new_N_res)
+    N_ph = new_N_ph;
+    N_res = new_N_res;
+    generate_resonator_states;
+  end
+end
+
 % takes a fock state like [1,0,0,1] (one photon in first and last resonators) and returns the equivilent state: [0;0;0;0;0;0;0;0;1;0;0;0;0;0;0]
 % only works for the values in the array of states, not superpositions of them
 function s = fock_state_to_resonator_state(fock_state)
@@ -86,10 +107,10 @@ function s = fock_state_to_resonator_state(fock_state)
 end
 
 %reverse of previous function; will work on superpositions of states
-function density = resonator_state_to_density(state)
+function EV = resonator_state_to_EV(state)
   global N_res;
   for n = 1:N_res
-    density(n) = expectation_value(state, resonator_number(n));
+    EV(n) = state_expectation_value(state, resonator_number(n));
   end
 end
 
@@ -121,37 +142,43 @@ function s = fock_state_to_QB_state(fock_state)
 end
 
 %reverse of previous function; will work on fractional states
-function s = QB_state_to_density(state)
+function s = QB_state_to_EV(state)
   global N_res;
   for n = 1:N_res
-    density(n) = expectation_value(state, QB_number(n));
+    EV(n) = state_expectation_value(state, QB_number(n));
   end
 end
 
 %gives the state of the whole system from fock_states for resonators and QBs
-function s = density_to_state(res_fock,QB_fock)
+function s = fock_to_state(res_fock,QB_fock)
   s = kron(fock_state_to_resonator_state(res_fock),fock_state_to_QB_state(QB_fock));
 end
 
+%gives the density matrix of the whole system from fock_states for resonators and QBs
+function dm = fock_to_DM(res_fock,QB_fock)
+  dm = diag(fock_to_state(res_fock,QB_fock));
+end
+
+
 %gives the expected number of photons in each resonator for a state or states
-function densities = state_to_resonator_desnity(states)
+function EVs = state_to_resonator_EV(states)
   global N_res;
 
   for n = 1:N_res %generate all the number operators we'll need
     N_op{n} = kron(resonator_number(n),eye(2^N_res));
   end
 
-  densities = [];
+  EVs = [];
   for state = states %iterate over the states
     for n = 1:N_res %find the denisty for the state we're on
-      density(n) = expectation_value(state, N_op{n});
+      EV(n) = state_expectation_value(state, N_op{n});
     end
-    densities = [densities; density];%add the denisty we found to the matrix of all densities
+    EVs = [EVs; EV];%add the denisty we found to the matrix of all EVs
   end
 end
 
 %gives the expected number of photons in each resonator for a state or states
-function densities = state_to_QB_desnity(states)
+function EVs = state_to_QB_EV(states)
   global N_resonator_states;
   global N_res;
 
@@ -159,12 +186,12 @@ function densities = state_to_QB_desnity(states)
     N_op{n} = kron(eye(N_resonator_states),QB_number(n));
   end
 
-  densities = [];
+  EVs = [];
   for state = states %iterate over the states
     for n = 1:N_res %find the denisty for the state we're on
-      density(n) = expectation_value(state, N_op{n});
+      EV(n) = state_expectation_value(state, N_op{n});
     end
-    densities = [densities; density];%add the denisty we found to the matrix of all densities
+    EVs = [EVs; EV];%add the denisty we found to the matrix of all EVs
   end
 end
 
@@ -320,20 +347,17 @@ function H = hamiltonian(interacting=[])
 end
 
 %evolves 'initial_state' for time 't' with indicies of interacting QBs given in 'interacting'
-function psi = evolve(state,t,interacting=[])
-  global H0;
-  global Hi1;
-  global Hi2;
+function psi = evolve_state(initial_state,t,interacting=[])
   global h_bar;
 
   H = hamiltonian(interacting);
 
-  %method 1, decompose state in to the eigenvectors of 'H', then evolve those -- this seems to be fastest, especially for more than one time value
+  %method 1, decompose initial_state in to the eigenvectors of 'H', then evolve those -- this seems to be fastest, especially for more than one time value
   [eig_vectors,D] = eig(H);
   eig_values = diag(D);
   psi = zeros(size(H)(1),size(t)(2)); %number of rows equal to number of states, number of columns equal to number of times
   for n = 1:size(eig_vectors)(1)
-    projection = eig_vectors(:,n) * (eig_vectors(:,n)'*state); %projection of 'state' on to 'n'th eigenvector
+    projection = eig_vectors(:,n) * (eig_vectors(:,n)'*initial_state); %projection of 'initial_state' on to 'n'th eigenvector
     for m = 1:size(t)(2)
       psi(:,m) += exp(-i*eig_values(n)*t(m)/h_bar)*projection; %evolve weighted 'n'th eigenvector and add to results
     end
@@ -343,11 +367,22 @@ function psi = evolve(state,t,interacting=[])
 %    psi = expm(-i*(H*t)/h_bar)*state;
 end;
 
+%evolves 'DM' for time 't' with indicies of interacting QBs given in 'interacting'
+function DM = evolve_DM(DM,t,interacting=[])
+  global h_bar;
+
+  H = hamiltonian(interacting);
+  evL = expm(-i*H*dt/h_bar);
+  evR = evL';
+
+  DM = evL*state*evR;
+end;
+
 %evolves 'initial_state' to times [0,stop_time/(npoints-1),2*stop_time/(npoints-1),...,stop_time] with indicies of
 %interacting QBs given in 'interacting' this function works by exponentiating a matrix; that's a high fixed time cost,
 %but it only has to be done once because the times are easilly space, so this can be faster than the previous
 %function if you're dealing with many evenly spaced time steps
-function psi = evolve_linspaced_t(state,stop_time,npoints,interacting=[])
+function psi = evolve_state_linspaced_t(initial_state,stop_time,npoints,interacting=[])
   global H0;
   global Hi1;
   global Hi2;
@@ -358,54 +393,64 @@ function psi = evolve_linspaced_t(state,stop_time,npoints,interacting=[])
 
   ev = expm(-i*H*dt/h_bar);
 
-  psi(:,1) = state;
+  psi(:,1) = initial_state;
 
   for n = 2:npoints
     psi(:,n) = ev*psi(:,n-1);
   end
 end;
 
-function ps = prob_in_fock_state(states, resonator_fock_state, QB_fock_state)
+function DMs = evolve_DM_linspaced_t(initial_DM,stop_time,npoints,interacting=[])
+  global h_bar;
+
+  H = hamiltonian(interacting);
+  dt = stop_time/(npoints-1);
+
+  evL = expm(-i*H*dt/h_bar);
+  evR = evL';
+
+  DMs{1} = initial_DM;
+
+  for n = 2:npoints
+    DMs{n} = evL*DMs{n-1}*evR;
+  end
+end;
+
+%takes in a state or array of states and returns an array of probabilities that those states are in the given fock state
+function ps = prob_state_in_fock_state(states, resonator_fock_state, QB_fock_state)
   ps = [];
-  fock_state = density_to_state(resonator_fock_state,QB_fock_state);
+  fock_state = EV_to_state(resonator_fock_state,QB_fock_state);
   for state = states
     ps = [ps , abs(state'*fock_state)^2];
   end
 end
-  
-%TODO: MAKE ALL THIS GENERAL
-function probs = ps(wait_times)
-  global h_bar;
-  global wInt;
 
-  initial_state = density_to_state([0,0],[1,1]);
-  swap_in = expm(-i*hamiltonian([1,2])*10e-9/h_bar);
-%    swap_out = expm(-i*hamiltonian([1,2])*10e-9/sqrt(2)/h_bar);
-
-  final_states = [];
-  for wait_time = wait_times
-    wait = expm(-i*hamiltonian()*wait_time/h_bar);
-%      final_states = [final_states, swap_out*wait*swap_in * initial_state];
-    final_states = [final_states, wait*swap_in * initial_state];
+%takes in a density matrix or cell array of density matrices and returns an array of probabilities that those states are in the given fock state  
+function ps = prob_DM_in_fock_state(DMs, resonator_fock_state, QB_fock_state)
+  ps = [];
+  fock_state_operator = fock_to_DM(resonator_fock_state, QB_fock_state);
+  for DM = DMs
+    ps = [ps , DM_expectation_value(DM{1}, fock_state_operator)];
   end
-
-  probs = [];
-  probs = [probs; prob_in_fock_state(final_states, [0,0], [1,1])];
-  probs = [probs; prob_in_fock_state(final_states, [1,0], [0,1]) + prob_in_fock_state(final_states, [0,1], [0,1])];
-  probs = [probs; prob_in_fock_state(final_states, [1,0], [1,0]) + prob_in_fock_state(final_states, [0,1], [1,0])];
-  probs = [probs; prob_in_fock_state(final_states, [1,1], [0,0])];
-  probs = [probs; prob_in_fock_state(final_states, [2,0], [0,0])];
-  probs = [probs; prob_in_fock_state(final_states, [0,2], [0,0])];
 end
 
-%simulates Hong–Ou–Mandel experiment
+%%%%%%%%%%%%%%%%%%% SIMULATIONS OF EXPERIMENTS %%%%%%%%%%%%%%%%%%%
+
+
+%simulates Hong–Ou–Mandel experiment for two resonators and two qubits
+%it returns g2, the joint switching probabilities divided by the individual switching probabilities (P11/P1A/P1B)
+%'wait_times' is the array of times you want g2 at
 function g2 = HOM(wait_times)
   global h_bar;
   global wInt;
 
-  initial_state = density_to_state([0,0],[1,1]);
-  swap_in = expm(-i*hamiltonian([1,2])*10e-9/h_bar);
-  swap_out = expm(-i*hamiltonian([1,2])*10e-9/h_bar);
+  set_resonator_states(2, 2);
+
+  QB_swap_t = 2*pi*1/wInt/4;
+
+  initial_state = EV_to_state([0,0],[1,1]);
+  swap_in = expm(-i*hamiltonian([1,2])*QB_swap_t/h_bar);
+  swap_out = expm(-i*hamiltonian([1,2])*QB_swap_t/sqrt(2)/h_bar); %two photons in the resonators mean that swap time is multiplied by 1/sqrt(2)
 
   final_states = [];
   for wait_time = wait_times
@@ -414,10 +459,10 @@ function g2 = HOM(wait_times)
   end
 
   %probability junction A is excited
-  P1A = prob_in_fock_state(final_states, [0,0], [1,1]) + prob_in_fock_state(final_states, [1,0], [0,1]) + prob_in_fock_state(final_states, [0,1], [0,1]);
+  P1A = prob_state_in_fock_state(final_states, [0,0], [1,1]) + prob_state_in_fock_state(final_states, [1,0], [0,1]) + prob_state_in_fock_state(final_states, [0,1], [0,1]);
   %probability junction B is excited
-  P1B = prob_in_fock_state(final_states, [0,0], [1,1]) + prob_in_fock_state(final_states, [1,0], [1,0]) + prob_in_fock_state(final_states, [0,1], [1,0]);
+  P1B = prob_state_in_fock_state(final_states, [0,0], [1,1]) + prob_state_in_fock_state(final_states, [1,0], [1,0]) + prob_state_in_fock_state(final_states, [0,1], [1,0]);
   %probability both junctions are excited
-  P11 = prob_in_fock_state(final_states, [0,0], [1,1]);
+  P11 = prob_state_in_fock_state(final_states, [0,0], [1,1]);
   g2 = P11./P1A./P1B;
 end

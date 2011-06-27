@@ -2,6 +2,8 @@ This is an Octave simulation of an experiment I'm working on in the McDermott gr
 
 If you're just some random person, then this code probably isn't too useful for you.
 
+sim.m and sim.matlab are the same, but GitHub only does correct syntax highlighting on the latter.
+
 All the files that make up this library are copyright 2011 by Leon Maurer.
 
   This program is free software; you can redistribute it and/or
