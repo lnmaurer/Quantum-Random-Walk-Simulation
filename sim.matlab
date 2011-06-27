@@ -3,7 +3,7 @@
 %For example, there are seperate creation/annihilation operators for QBs and resonators.
 %Later, these get combined with the Kronecker tensor product to form operators for the whole system.
 
-%The first section of the code is a bunch of functions that do useful things (like evolve states).
+%The first section of the code is a bunch of functions that do useful things (like evolving states).
 %The second section uses that code to simulate experiments.
 
 %NOTES:
@@ -368,14 +368,16 @@ function psi = evolve_state(initial_state,t,interacting=[])
 end;
 
 %evolves 'DM' for time 't' with indicies of interacting QBs given in 'interacting'
-function DM = evolve_DM(DM,t,interacting=[])
+function DMs = evolve_DM(DM,times,interacting=[])
   global h_bar;
 
   H = hamiltonian(interacting);
-  evL = expm(-i*H*dt/h_bar);
-  evR = evL';
+  DMs = {};
 
-  DM = evL*state*evR;
+  for t = times
+    ev = expm(-i*H*t/h_bar);
+    DMs = [DMs, {ev*DM*(ev')}];
+  end
 end;
 
 %evolves 'initial_state' to times [0,stop_time/(npoints-1),2*stop_time/(npoints-1),...,stop_time] with indicies of
