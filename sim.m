@@ -422,6 +422,7 @@ function DMs = evolve_DM_linspaced_t(initial_DM,stop_time,npoints,interacting=[]
 end;
 
 %ONLY MULTI-TIME EVOLUTION FUNCTION THAT SUPPORTS RELAXATION!!
+%if store_intermediate_points == false, then it just returns the last DM; otherwise, it returns a cell array of all DMs
 function DMs = relax_evolve_DM_linspaced_t(initial_DM,stop_time,npoints,interacting=[],store_intermediate_points=true)
   global h_bar;
   global N_res;

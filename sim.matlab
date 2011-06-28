@@ -5,6 +5,7 @@
 
 %The first section of the code is a bunch of functions that do useful things (like evolving states).
 %The second section uses that code to simulate experiments.
+%The third section is for temporary functions.
 
 %NOTES:
 %-states are column vectors
@@ -25,6 +26,7 @@ global resRelaxationTime = 600e-9; %resonator relaxtion rate A RELAXATION RATE O
 global QBRelaxationTime = 200e-9; %resonator relaxtion rate A RELAXATION RATE OF <=0 TURNS OF RELAXATION
 global N_resonator_states; %run generate_resonator_states to populate
 global resonator_states; %run generate_resonator_states to populate
+global RelEvlStepSz = 10e-12; %step size for evolution with relaxation NOT USED BY A FUNCTIONS YET
 
 %%%%%%%%%%%%%%%%%%% USEFUL FUNCTIONS %%%%%%%%%%%%%%%%%%%
 
@@ -419,8 +421,9 @@ function DMs = evolve_DM_linspaced_t(initial_DM,stop_time,npoints,interacting=[]
   end
 end;
 
-%ONLY EVOLUTION FUNCTION THAT SUPPORTS RELAXATION!!
-function DMs = relax_evolve_DM_linspaced_t(initial_DM,stop_time,npoints,interacting=[])
+%ONLY MULTI-TIME EVOLUTION FUNCTION THAT SUPPORTS RELAXATION!!
+%if store_intermediate_points == false, then it just returns the last DM; otherwise, it returns a cell array of all DMs
+function DMs = relax_evolve_DM_linspaced_t(initial_DM,stop_time,npoints,interacting=[],store_intermediate_points=true)
   global h_bar;
   global N_res;
   global N_resonator_states;
@@ -487,15 +490,36 @@ function DMs = relax_evolve_DM_linspaced_t(initial_DM,stop_time,npoints,interact
     end
   end
 
-  DMs{1} = initial_DM;
-
-  for n = 2:npoints
-    DMs{n} = evL*DMs{n-1}*evR; %evolve one timestep
-    for m = 1:size(E0s)(2) %loop over all the relaxation operators
-      DMs{n} = E0s{m}*DMs{n}*(E0s{m}') + E1s{m}*DMs{n}*(E1s{m}');
+  if store_intermediate_points
+    DMs{1} = initial_DM;
+    for n = 2:npoints
+      DMs{n} = evL*DMs{n-1}*evR; %evolve one timestep
+      for m = 1:size(E0s)(2) %loop over all the relaxation operators
+	DMs{n} = E0s{m}*DMs{n}*(E0s{m}') + E1s{m}*DMs{n}*(E1s{m}');
+      end
+    end
+  else
+    DMs = initial_DM;
+    for n = 2:npoints
+      DMs = evL*DMs*evR; %evolve one timestep
+      for m = 1:size(E0s)(2) %loop over all the relaxation operators
+	DMs = E0s{m}*DMs*(E0s{m}') + E1s{m}*DMs*(E1s{m}');
+      end
     end
   end
 end;
+
+%only evolves for one time
+function DM = relax_evolve_DM(initial_DM,stop_time,interacting=[])
+  global RelEvlStepSz;
+  
+  if stop_time > 0
+    npoints = ceil(stop_time/RelEvlStepSz);
+    DM = relax_evolve_DM_linspaced_t(initial_DM,stop_time,npoints,interacting,false);
+  else %handles case where stop_time == 0
+    DM = initial_DM;
+  end
+end
 
 %takes in a state or array of states and returns an array of probabilities that those states are in the given fock state
 function ps = prob_state_in_fock_state(states, resonator_fock_state, QB_fock_state)
@@ -518,7 +542,8 @@ end
 %%%%%%%%%%%%%%%%%%% SIMULATIONS OF EXPERIMENTS %%%%%%%%%%%%%%%%%%%
 
 
-%simulates Hong–Ou–Mandel experiment for two resonators and two qubits
+%starts with both QBs excited, swaps them in to the resonators, waits the given time, and then swaps out for swap time/sqrt(2)
+%this simulates the Hong–Ou–Mandel experiment for two resonators and two qubits WITHOUT RELAXATION
 %it returns g2, the joint switching probabilities divided by the individual switching probabilities (P11/P1A/P1B)
 %'wait_times' is the array of times you want g2 at
 function g2 = HOM(wait_times)
@@ -548,11 +573,11 @@ function g2 = HOM(wait_times)
   g2 = P11./P1A./P1B;
 end
 
-%simulates Hong–Ou–Mandel experiment for two resonators and two qubits
+%starts with both QBs excited, swaps them in to the resonators, waits the given time, and then swaps out for swap time/sqrt(2)
+%this simulates the Hong–Ou–Mandel experiment for two resonators and two qubits WITH RELAXATION
 %it returns g2, the joint switching probabilities divided by the individual switching probabilities (P11/P1A/P1B)
 %'wait_times' is the array of times you want g2 at
 function g2 = HOMrelax(wait_length)
-  global h_bar;
   global wInt;
 
   set_resonator_states(2, 2);
@@ -577,4 +602,110 @@ function g2 = HOMrelax(wait_length)
   %probability both junctions are excited
   P11 = prob_DM_in_fock_state(after_swapping_out, [0,0], [1,1]);
   g2 = P11./P1A./P1B;
+end
+
+%TODO: WRITE EXPLANATION
+function g2 = HOMrelax_delay
+  global wInt;
+  global RelEvlStepSz;
+
+  set_resonator_states(2, 2);
+
+  QB1_start_t_min = 10e-9;
+  QB1_start_t_max = 70e-9;
+  QB2_start_t     = 40e-9;
+  max_delay       = 10e-9;
+
+  QB_swap_in_t  = 2*pi*1/wInt/4;
+  QB_swap_out_t = 2*pi*1/wInt/4/sqrt(2);
+
+  QB1_start_times = linspace(QB1_start_t_min,QB1_start_t_max,101); %might run in to problems if we start right at zero
+  QB2_rel_start_t = QB2_start_t - QB1_start_t_min; %relative times are times after QB1_start_t_min
+  QB2_rel_end_t   = QB2_rel_start_t + QB_swap_out_t;
+
+  initial_DM = fock_to_DM([0,0],[1,1]);
+  after_swap_in  = relax_evolve_DM(initial_DM,    QB_swap_in_t,    [1,2]);
+  after_min_time = relax_evolve_DM(after_swap_in, QB1_start_t_min, []);
+
+  after_swapping_out = {};
+n = 1
+  for QB1_start_t = QB1_start_times
+n = n + 1
+    QB1_rel_start_t = QB1_start_t - QB1_start_t_min;
+    QB1_rel_end_t   = QB1_rel_start_t + QB_swap_out_t;
+
+    %by symetry, it doesn't really matter which one starts first or second, only that one starts first or second
+    %so QBa will be the one starting first, and QBb will be the one starting second
+    QBa_s = min(QB1_rel_start_t, QB2_rel_start_t);
+    QBa_e = min(QB1_rel_end_t, QB2_rel_end_t);
+    QBb_s = max(QB1_rel_start_t, QB2_rel_start_t);
+    QBb_e = max(QB1_rel_end_t, QB2_rel_end_t);
+
+    temp = relax_evolve_DM(after_min_time, QBa_s, []); %evolve up to when QBa starts interacting
+    if QBb_s < QBa_e %QBb starts before QBa ends
+      temp = relax_evolve_DM(temp, QBb_s - QBa_s, [1]); %evolve up to when QBb starts interacting
+      temp = relax_evolve_DM(temp, QBa_e - QBb_s, [1,2]); %evolve up to when QBa stops interacting
+      temp = relax_evolve_DM(temp, QBb_e - QBa_e, [2]); %evolve up to when QBb stops interacting
+    else %QBb starts after QBa ends
+      temp = relax_evolve_DM(temp, QBa_e - QBa_s, [1]); %evolve up to when QBa stops interacting
+      temp = relax_evolve_DM(temp, QBb_s - QBa_e, []); %evolve up to when QBb starts interacting
+      temp = relax_evolve_DM(temp, QBb_e - QBb_s, [2]); %evolve up to when QBb stops interacting
+    end
+%      QB1_start_t = delay_t + QB1_start_t_min;
+%      if delay_t + QB1_start_t_min + QB_swap_out_t < QB2_start_t %QBs never interact at the same time; QB1 is done before QB2 starts
+%        temp = relax_evolve_DM(after_min_time, delay_t, []);
+%        temp = relax_evolve_DM(temp,           QB_swap_out_t, [1]);
+%        temp = relax_evolve_DM(temp,           QB2_start_t - QB_swap_out_t - QB1_start_t, []);
+%        temp = relax_evolve_DM(temp,           QB_swap_out_t, [2]);
+%      elseif delay_t + QB1_start_t_min > QB2_start_t + QB_swap_out_t %QBs never interact at the same time; QB2 is done before QB1 starts
+%        temp = relax_evolve_DM(after_min_time, QB2_start_t - QB1_start_t_min, []);
+%        temp = relax_evolve_DM(temp,           QB_swap_out_t, [2]);
+%        temp = relax_evolve_DM(temp,           QB1_start_t - QB2_start_t - QB_swap_out_t, []);
+%        temp = relax_evolve_DM(temp,           QB_swap_out_t, [1]);
+%      elseif delay_t + QB1_start_t_min < QB2_start_t %QBs' interaction periods overlap; QB1 starts first
+%        temp = relax_evolve_DM(after_min_time, delay_t, []);
+%        temp = relax_evolve_DM(temp,           QB2_start_t - QB1_start_t, [1]);
+%        temp = relax_evolve_DM(temp,           QB1_start_t + QB_swap_out_t - QB2_start_t, [1,2]);
+%        temp = relax_evolve_DM(temp,           QB1_start_t + QB_swap_out_t - QB2_start_t, [1,2]);
+%      else %QBs' interaction periods overlap; QB2 starts first
+%        temp = relax_evolve_DM(after_min_time, QB2_start_t - QB1_start_t_min, []);
+%        temp = relax_evolve_DM(temp,           QB1_start_t - QB2_start_t, [2]);
+%        temp = relax_evolve_DM(temp,           QB1_start_t - QB2_start_t, [2]);
+%  NOT FINISHED
+%      end
+
+    after_swapping_out = [after_swapping_out, {temp}];
+  end
+
+
+  %probability junction A is excited
+  P1A = prob_DM_in_fock_state(after_swapping_out, [0,0], [1,1]) + prob_DM_in_fock_state(after_swapping_out, [1,0], [0,1]) + prob_DM_in_fock_state(after_swapping_out, [0,1], [0,1]);
+  %probability junction B is excited
+  P1B = prob_DM_in_fock_state(after_swapping_out, [0,0], [1,1]) + prob_DM_in_fock_state(after_swapping_out, [1,0], [1,0]) + prob_DM_in_fock_state(after_swapping_out, [0,1], [1,0]);
+  %probability both junctions are excited
+  P11 = prob_DM_in_fock_state(after_swapping_out, [0,0], [1,1]);
+  g2 = P11./P1A./P1B;
+end
+
+%%%%%%%%%%%%%%%%%%% TEMPORARY FUNCTIONS %%%%%%%%%%%%%%%%%%%
+
+
+function p11 = p11s(wait_length)
+  global wInt;
+
+  set_resonator_states(2, 2);
+
+  QB_swap_t = 2*pi*1/wInt/4;
+
+  initial_DM = fock_to_DM([0,0],[1,1]);
+  after_swap_in = relax_evolve_DM_linspaced_t(initial_DM,QB_swap_t,QB_swap_t/10e-12,[1,2]){end};
+  after_wait_times = relax_evolve_DM_linspaced_t(after_swap_in,wait_length,wait_length/10e-12);
+  after_wait_times = after_wait_times(3500:50:end); %throw out 499/500 points TODO: DO THIS MORE CLEANLY; ADD OPTION
+
+  after_swapping_out = {};
+  for aw = after_wait_times
+    after_swapping_out = [after_swapping_out, {relax_evolve_DM_linspaced_t(aw{1},QB_swap_t/sqrt(2),QB_swap_t/sqrt(2)/10e-12,[1,2]){end}}];
+  end
+
+  p11 = prob_DM_in_fock_state(after_swapping_out, [0,0], [1,1]);
 end
