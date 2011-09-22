@@ -435,8 +435,8 @@ function DMs = relax_evolve_DM_linspaced_t(initial_DM,stop_time,npoints,interact
   H = hamiltonian(interacting);
   dt = stop_time/(npoints-1);
 
-  evL = expm(-i*H*dt/h_bar);
-  evR = evL';
+  evL = expm(-i*H*dt/h_bar); %the left matrix to use for time evolution
+  evR = evL'; %the right matrix to use for time evolution
   
   I_res = eye(N_resonator_states);
   I_qb  = eye(2^N_res);
@@ -524,7 +524,7 @@ end
 %takes in a state or array of states and returns an array of probabilities that those states are in the given fock state
 function ps = prob_state_in_fock_state(states, resonator_fock_state, QB_fock_state)
   ps = [];
-  fock_state = EV_to_state(resonator_fock_state,QB_fock_state);
+  fock_state = fock_to_state(resonator_fock_state,QB_fock_state);
   for state = states
     ps = [ps , abs(state'*fock_state)^2];
   end
@@ -554,7 +554,7 @@ function g2 = HOM(wait_times)
 
   QB_swap_t = 2*pi*1/wInt/4;
 
-  initial_state = EV_to_state([0,0],[1,1]);
+  initial_state = fock_to_state([0,0],[1,1]);
   swap_in = expm(-i*hamiltonian([1,2])*QB_swap_t/h_bar);
   swap_out = expm(-i*hamiltonian([1,2])*QB_swap_t/sqrt(2)/h_bar); %two photons in the resonators mean that swap time is multiplied by 1/sqrt(2)
 
@@ -611,8 +611,8 @@ function g2 = HOMrelax_delay
 
   set_resonator_states(2, 2);
 
-  QB1_start_t_min = 10e-9;
-  QB1_start_t_max = 70e-9;
+  QB1_start_t_min = 5e-9;
+  QB1_start_t_max = 100e-9;
   QB2_start_t     = 40e-9;
   max_delay       = 10e-9;
 
@@ -685,6 +685,7 @@ n = n + 1
   %probability both junctions are excited
   P11 = prob_DM_in_fock_state(after_swapping_out, [0,0], [1,1]);
   g2 = P11./P1A./P1B;
+%  g2 = [P1A;P1B;P11];
 end
 
 %%%%%%%%%%%%%%%%%%% TEMPORARY FUNCTIONS %%%%%%%%%%%%%%%%%%%
